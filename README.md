@@ -309,17 +309,22 @@ The benchmark requires long-context data to simulate multimodal malware analysis
 To generate the dataset, clone this repository on your cluster login node and run the generator:
 
 ```bash
-git clone https://github.com/MG-Cafe/B200_H100_FineTuning_Benchmark.git ~/olmo3-finetune
-cd ~/olmo3-finetune
+# Clone the repo into your home directory
+git clone https://github.com/MG-Cafe/B200_H100_FineTuning_Benchmark.git ~/B200_H100_FineTuning_Benchmark
+
+# Generate 500 samples
+mkdir -p ~/olmo3-nemo/data
+cd ~/B200_H100_FineTuning_Benchmark
 python h100_finetuning/fsdp_scripts/generate_training_data.py
+mv simulated_training_data/train.jsonl ~/olmo3-nemo/data/train.jsonl
 ```
-This script will produce `simulated_training_data/train.jsonl` containing 500 samples (roughly 140 MB).
+This script will produce `train.jsonl` containing 500 samples (roughly 140 MB).
 
 ---
 
-## 7. Fine-Tuning Execution Guide
+## 7. Fine-Tuning Execution Guide (NVIDIA NeMo Framework)
 
-The following steps launch the distributed fine-tuning job across 16 GPUs using PyTorch FSDP.
+The following steps launch the distributed fine-tuning job across 16 GPUs using NVIDIA's NeMo Automodel container, which properly handles the FSDP partitioning logic for the benchmark.
 
 **Step 1: SSH into the Slurm Login Node**
 ```bash
@@ -331,112 +336,57 @@ sinfo
 ```
 
 **Step 2: Create the Directory Structure**
+The NeMo scripts expect the working directory to be `~/olmo3-nemo`.
 ```bash
-mkdir -p ~/olmo3-finetune/scripts
-mkdir -p ~/olmo3-finetune/simulated_training_data
+mkdir -p ~/olmo3-nemo/data
 mkdir -p ~/logs
+
+# Copy all NeMo configurations and scripts from the repository to the working directory
+cp -r ~/B200_H100_FineTuning_Benchmark/b200_finetuning/* ~/olmo3-nemo/
 ```
 
-**Step 3: Upload or Link Training Data**
-Ensure your `train.jsonl` from the generation step is located at `~/olmo3-finetune/simulated_training_data/train.jsonl`.
+**Step 3: Update Hardcoded Paths in Scripts and Configs**
+The provided Slurm scripts and YAML configs in the repository may contain the original environment's hardcoded home directory (`/home/sa_101048180276343241939`). Run these commands to replace them with your actual home directory:
 ```bash
-wc -l ~/olmo3-finetune/simulated_training_data/train.jsonl
-# Should output 500
+cd ~/olmo3-nemo
+sed -i "s|/home/sa_101048180276343241939|$HOME|g" configs/*.yaml
+sed -i "s|/home/sa_101048180276343241939|$HOME|g" *.sh
 ```
 
-**Step 4: Deploy the FSDP Config (YAML)**
-Run this exact block to configure Accelerate:
-```bash
-cat > ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml << 'EOF'
-compute_environment: LOCAL_MACHINE
-debug: false
-distributed_type: FSDP
-downcast_bf16: "no"
-fsdp_config:
-  fsdp_sharding_strategy: FULL_SHARD
-  fsdp_activation_checkpointing: true
-  fsdp_auto_wrap_policy: SIZE_BASED_WRAP
-  fsdp_min_num_params: 100000000
-  fsdp_offload_params: true
-  fsdp_state_dict_type: SHARDED_STATE_DICT
-  fsdp_forward_prefetch: true
-  fsdp_backward_prefetch: BACKWARD_PRE
-  fsdp_sync_module_states: true
-  fsdp_use_orig_params: true
-  fsdp_cpu_ram_efficient_loading: true
-machine_rank: 0
-main_training_function: main
-mixed_precision: bf16
-num_machines: 2
-num_processes: 16
-rdzv_backend: c10d
-same_network: true
-tpu_env: []
-tpu_use_cluster: false
-tpu_use_sudo: false
-use_cpu: false
-EOF
-```
-
-**Step 5: Deploy the Training & Submit Scripts**
-Copy the `train.py` and `submit_h100.sh` (or `submit_b200.sh`) scripts provided in this repository into your working directory:
-```bash
-cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/fsdp_scripts/train.py ~/olmo3-finetune/scripts/train.py
-cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/submit_h100.sh ~/olmo3-finetune/submit_h100.sh
-chmod +x ~/olmo3-finetune/submit_h100.sh
-```
-
-**Step 6: Verify All Files Are Correct**
-```bash
-# Check YAML has SIZE_BASED_WRAP
-grep 'SIZE_BASED' ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml
-
-# Check train.py has FSDP diagnostic
-grep 'count_fsdp_units' ~/olmo3-finetune/scripts/train.py
-
-# Check submit script has correct container
-grep 'container-image' ~/olmo3-finetune/submit_h100.sh
-```
-
-**Step 7: Clean Up Previous Runs (If Any)**
+**Step 4: Clean Up Previous Runs (If Any)**
 ```bash
 scancel --user=$(whoami)
-rm -rf ~/olmo3-finetune/output-h100-*/
-rm -rf ~/olmo3-finetune/output-b200-*/
+rm -rf ~/olmo3-nemo/benchmark-h100/
+rm -rf ~/olmo3-nemo/benchmark-b200/
 ```
 
-**Step 8: Submit the Job**
+**Step 5: Submit the Benchmark Job**
 ```bash
 # For H100 cluster:
-sbatch ~/olmo3-finetune/submit_h100.sh
+sbatch ~/olmo3-nemo/submit_h100_benchmark.sh
 
-# For B200 cluster (using the respective script):
-# sbatch ~/olmo3-finetune/submit_b200.sh
+# For B200 cluster:
+sbatch ~/olmo3-nemo/submit_b200_benchmark.sh
 ```
 
-**Step 9: Monitor the Job**
+**Step 6: Monitor the Job**
 ```bash
 squeue --user=$(whoami)
 
 # Watch the error log (diagnostics):
-tail -f $(ls -t ~/logs/olmo3-h100-*.err | head -1)
+tail -f $(ls -t ~/logs/olmo3-bench-*.err | head -1)
 
 # Watch the output log:
-tail -f $(ls -t ~/logs/olmo3-h100-*.out | head -1)
-
-# Search for key memory diagnostics in a completed job:
-grep -E "OutOfMemory|MEM |FSDP units|Step |TRAINING COMPLETE" \
-  ~/logs/olmo3-h100-*.err | head -30
+tail -f $(ls -t ~/logs/olmo3-bench-*.out | head -1)
 ```
 
-**Step 10: Collect Results**
-After training is complete, results are saved in the output directory.
+**Step 7: Collect Results**
+The NeMo benchmark scripts output rich profiling data (NSYS traces, DCGM GPU utilization, output logs).
 ```bash
-ls ~/olmo3-finetune/output-h100-*/training_metrics_h100.csv
-cat ~/olmo3-finetune/output-h100-*/training_summary_h100.json
-ls ~/olmo3-finetune/output-h100-*/nsight_traces_h100/
-ls ~/olmo3-finetune/output-*/dcgm_node_*.csv
+ls -la ~/olmo3-nemo/benchmark-h100/  # For H100
+ls -la ~/olmo3-nemo/benchmark-b200/  # For B200
 
-# Upload to GCS
-gsutil -m cp -r "$(ls -dt ~/olmo3-finetune/output-h100-*/ | head -1)" gs://<YOUR_RESULTS_BUCKET>/h100/
+# Upload to your GCS bucket
+gsutil -m cp -r ~/olmo3-nemo/benchmark-h100 gs://<YOUR_RESULTS_BUCKET>/h100/
+gsutil -m cp -r ~/olmo3-nemo/benchmark-b200 gs://<YOUR_RESULTS_BUCKET>/b200/
 ```
