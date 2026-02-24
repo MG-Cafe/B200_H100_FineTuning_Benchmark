@@ -1,0 +1,61 @@
+# OLMo-3 32B SFT on B200 (2 nodes x 8 GPUs = 16 GPUs)
+# NeMo AutoModel - nemo-automodel:25.11.00 container
+# APPLE-TO-APPLE: Same config as H100, only paths changed
+
+step_scheduler:
+  global_batch_size: 16
+  local_batch_size: 1
+  ckpt_every_steps: 50
+  val_every_steps: 9999
+  num_epochs: 1
+
+dist_env:
+  backend: nccl
+  timeout_minutes: 30
+
+rng:
+  _target_: nemo_automodel.components.training.rng.StatefulRNG
+  seed: 42
+  ranked: true
+
+model:
+  _target_: nemo_automodel.NeMoAutoModelForCausalLM.from_pretrained
+  pretrained_model_name_or_path: allenai/Olmo-3-1125-32B
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: /home/sa_101048180276343241939/olmo3-nemo/output-b200/checkpoints
+  model_save_format: safetensors
+  save_consolidated: false
+
+distributed:
+  _target_: nemo_automodel.components.distributed.fsdp2.FSDP2Manager
+  dp_size: null
+  tp_size: 1
+  cp_size: 1
+  sequence_parallel: false
+  activation_checkpointing: true
+
+loss_fn:
+  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
+
+dataset:
+  _target_: scripts.malware_dataset.MalwareAnalysisDataset
+  path_or_dataset: /home/sa_101048180276343241939/olmo3-nemo/data/train.jsonl
+  split: train
+  max_length: 2048
+
+packed_sequence:
+  packed_sequence_size: 0
+
+dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  collate_fn: nemo_automodel.components.datasets.utils.default_collater
+  shuffle: true
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 2.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  eps: 1.0e-8

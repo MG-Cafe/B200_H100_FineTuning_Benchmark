@@ -1,0 +1,23 @@
+---
+terraform_backend_defaults:
+  type: gcs
+  configuration:
+    bucket: olmo3-h100-tf-state
+vars:
+  deployment_name: olmo3-h100
+  project_id: gpu-launchpad-playground
+  region: us-central1
+  zone: us-central1-a
+  network_name_system: olmo3-h100-sys-net
+  subnetwork_name_system: olmo3-h100-sys-subnet
+  enable_ops_agent: true
+  enable_nvidia_dcgm: true
+  enable_nvidia_persistenced: true
+  disk_size_gb: 200
+  final_image_family: slurm-olmo3-h100
+  slurm_cluster_name: olmo3h100
+  a3mega_cluster_size: 2
+  a3mega_reservation_name: ""
+  a3mega_dws_flex_enabled: true
+  a3mega_enable_spot_vm: false
+  a3mega_enable_placement: false

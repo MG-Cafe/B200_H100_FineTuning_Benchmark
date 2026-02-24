@@ -1,0 +1,19 @@
+---
+terraform_backend_defaults:
+  type: gcs
+  configuration:
+    bucket: olmo3-b200-tf-state
+
+vars:
+  deployment_name: olmo3-b200
+  project_id: gpu-launchpad-playground
+  region: us-south1
+  zone: us-south1-b
+
+  # Cluster size: number of a4-highgpu-8g VMs (each has 8x B200)
+  a4h_cluster_size: 2
+
+  # DWS Flex Start (no reservation needed)
+  a4h_dws_flex_enabled: true
+  a4h_enable_spot_vm: false
+  a4h_reservation_name: ""

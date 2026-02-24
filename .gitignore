@@ -1,0 +1,9 @@
+*.jsonl
+*.bin
+*.pt
+*.safetensors
+.hf_cache/
+checkpoints/
+output-*/
+benchmark-*/
+logs/
