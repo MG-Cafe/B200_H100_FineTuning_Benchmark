@@ -322,9 +322,23 @@ This script will produce `train.jsonl` containing 500 samples (roughly 140 MB).
 
 ---
 
-## 7. Fine-Tuning Execution Guide (NVIDIA NeMo Framework)
+## 7. Fine-Tuning Execution Guide (NVIDIA NeMo Framework - Recommended)
 
-The following steps launch the distributed fine-tuning job across 16 GPUs using NVIDIA's NeMo Automodel container, which properly handles the FSDP partitioning logic for the benchmark.
+The following steps launch the distributed fine-tuning job across 16 GPUs using NVIDIA's NeMo Automodel container. 
+
+### Why NeMo? (FSDP & Gradient Checkpointing)
+As documented in the benchmark report, standard Hugging Face Accelerate fails to properly wrap the `Olmo3DecoderLayer` resulting in severe Out of Memory (OOM) errors. The NeMo framework properly resolves this using `FSDP2Manager` combined with activation (gradient) checkpointing. 
+
+The provided NeMo configurations (`configs/olmo3_32b_*.yaml`) explicitly enable these features:
+```yaml
+distributed:
+  _target_: nemo_automodel.components.distributed.fsdp2.FSDP2Manager
+  dp_size: null
+  tp_size: 1
+  cp_size: 1
+  sequence_parallel: false
+  activation_checkpointing: true
+```
 
 **Step 1: SSH into the Slurm Login Node**
 ```bash
@@ -389,4 +403,70 @@ ls -la ~/olmo3-nemo/benchmark-b200/  # For B200
 # Upload to your GCS bucket
 gsutil -m cp -r ~/olmo3-nemo/benchmark-h100 gs://<YOUR_RESULTS_BUCKET>/h100/
 gsutil -m cp -r ~/olmo3-nemo/benchmark-b200 gs://<YOUR_RESULTS_BUCKET>/b200/
+```
+
+---
+
+## 8. Appendix: Original FSDP Execution (For Debugging)
+
+If you wish to reproduce the exact PyTorch FSDP OOM failures documented in the report (using Hugging Face Accelerate), follow these steps instead of using NeMo.
+
+**Step 1: Create FSDP Directory Structure**
+```bash
+mkdir -p ~/olmo3-finetune/scripts
+mkdir -p ~/olmo3-finetune/simulated_training_data
+mkdir -p ~/logs
+
+# Move the simulated data
+cp ~/olmo3-nemo/data/train.jsonl ~/olmo3-finetune/simulated_training_data/train.jsonl
+```
+
+**Step 2: Deploy the FSDP Config (YAML)**
+Run this exact block to configure Accelerate:
+```bash
+cat > ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml << 'EOF'
+compute_environment: LOCAL_MACHINE
+debug: false
+distributed_type: FSDP
+downcast_bf16: "no"
+fsdp_config:
+  fsdp_sharding_strategy: FULL_SHARD
+  fsdp_activation_checkpointing: true
+  fsdp_auto_wrap_policy: SIZE_BASED_WRAP
+  fsdp_min_num_params: 100000000
+  fsdp_offload_params: true
+  fsdp_state_dict_type: SHARDED_STATE_DICT
+  fsdp_forward_prefetch: true
+  fsdp_backward_prefetch: BACKWARD_PRE
+  fsdp_sync_module_states: true
+  fsdp_use_orig_params: true
+  fsdp_cpu_ram_efficient_loading: true
+machine_rank: 0
+main_training_function: main
+mixed_precision: bf16
+num_machines: 2
+num_processes: 16
+rdzv_backend: c10d
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+EOF
+```
+
+**Step 3: Deploy the Training & Submit Scripts**
+```bash
+cd ~/B200_H100_FineTuning_Benchmark
+cp h100_finetuning/fsdp_scripts/train.py ~/olmo3-finetune/scripts/train.py
+cp h100_finetuning/submit_h100.sh ~/olmo3-finetune/submit_h100.sh
+chmod +x ~/olmo3-finetune/submit_h100.sh
+```
+
+**Step 4: Submit & Monitor**
+```bash
+sbatch ~/olmo3-finetune/submit_h100.sh
+
+# Watch logs for the FSDP memory jumps
+tail -f $(ls -t ~/logs/olmo3-h100-*.err | head -1)
 ```
