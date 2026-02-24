@@ -1,37 +1,26 @@
 # OLMo-3 32B Fine-Tuning Benchmark: H100 vs B200
 
-**GCP Slurm Cluster Setup & Technical Deployment Guide**  
-**Project:** gpu-launchpad-playground  
-
-## 📌 Executive Summary
-
-Two GPU clusters were deployed on Google Cloud Platform using **Cluster Toolkit** with Slurm for fine-tuning the **OLMo-3-1125-32B** (32B parameter) model. The primary goal is to benchmark **NVIDIA H100 vs B200 GPU** performance for distributed training.
-
-Both clusters use DWS Flex Start (dynamic workload scheduling) until dedicated reservations activate.
-
-| Cluster | GPU | Machine Type | Zone | Total GPUs | Networking |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **H100** | NVIDIA H100 80GB SXM | `a3-megagpu-8g` | `us-central1-a` | 16 (2x8) | GPUDirect-TCPXO |
-| **B200** | NVIDIA B200 192GB | `a4-highgpu-8g` | `us-south1-b` | 16 (2x8) | GPUDirect-RDMA (gIB/RoCE) |
-
-### Key Infrastructure Components
-- **H100 Login Node:** `olmo3h100-login-001` (us-central1-a)
-- **B200 Login Node:** `olmo3b200-slurm-login-001` (us-south1-b)
-- **Workstation VM:** `cluster-mgmt` (e2-standard-8 in us-central1-a)
-- **Container Runtime:** `enroot` + `pyxis` (NVIDIA NGC containers)
-- **Shared Filesystem:** Filestore NFS mounted at `/home`
+This repository contains the deployment and execution guidelines for fine-tuning the **OLMo-3-1125-32B** model on Google Cloud Platform, benchmarking NVIDIA H100 vs B200 GPU performance using Cluster Toolkit, Slurm, and PyTorch FSDP.
 
 ---
 
-## 🚀 1. Infrastructure Setup (Full Reproduction Steps)
+## 1. Prerequisites & Quotas
 
-### Step 1: Create Management Workstation
-Run the following from Cloud Shell to create the management workstation:
+Before deploying, ensure you have the following in your GCP project (`<YOUR_PROJECT_ID>`):
+- **NVIDIA H100 GPUs quota** in `us-central1` (for `a3-megagpu-8g` nodes, 16 GPUs total).
+- **NVIDIA B200 GPUs quota** in `us-south1` (for `a4-highgpu-8g` nodes, 16 GPUs total).
+- **HighScaleSSDStorageGibPerRegion** or **SsdStorageGibPerRegion** quota for Filestore.
+
+---
+
+## 2. Infrastructure Setup
+
+### Step 1: Create Management Workstation (Cloud Shell)
 
 ```bash
-gcloud config set project gpu-launchpad-playground
+gcloud config set project <YOUR_PROJECT_ID>
 
-# Enable required APIs
+# Enable APIs
 gcloud services enable \
   compute.googleapis.com file.googleapis.com storage.googleapis.com \
   serviceusage.googleapis.com cloudresourcemanager.googleapis.com \
@@ -39,7 +28,7 @@ gcloud services enable \
 
 # Create workstation VM
 gcloud compute instances create cluster-mgmt \
-  --project=gpu-launchpad-playground \
+  --project=<YOUR_PROJECT_ID> \
   --zone=us-central1-a \
   --machine-type=e2-standard-8 \
   --boot-disk-size=200GB \
@@ -49,12 +38,13 @@ gcloud compute instances create cluster-mgmt \
   --scopes=cloud-platform \
   --metadata=enable-oslogin=TRUE
 
-# SSH into the workstation VM
+# SSH into it
 gcloud compute ssh cluster-mgmt --zone=us-central1-a
 ```
 
 ### Step 2: Install Dependencies on Workstation
-From inside the workstation VM (`cluster-mgmt`):
+
+Run this inside the `cluster-mgmt` VM:
 
 ```bash
 sudo apt-get update && sudo apt-get upgrade -y
@@ -67,9 +57,13 @@ sudo tar -C /usr/local -xzf go1.23.6.linux-amd64.tar.gz
 rm go1.23.6.linux-amd64.tar.gz
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc && source ~/.bashrc
 
-# Install Terraform & Packer
-wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+# Install Terraform
+wget -O - https://apt.releases.hashicorp.com/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) \
+  signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+  https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update && sudo apt-get install -y terraform packer
 
 # Install Cluster Toolkit
@@ -77,14 +71,18 @@ cd ~ && git clone https://github.com/GoogleCloudPlatform/cluster-toolkit.git
 cd cluster-toolkit && make
 echo 'export PATH=$HOME/cluster-toolkit:$PATH' >> ~/.bashrc && source ~/.bashrc
 
-# Set Project (DO NOT run `gcloud auth login` due to Context-Aware Access restrictions)
-gcloud config set project gpu-launchpad-playground
+# Auth: Do NOT run gcloud auth login (Context-Aware Access blocks it)
+gcloud config set project <YOUR_PROJECT_ID>
+gcloud compute instances list --limit=1  # verify SA works
 ```
 
-### Step 3: Setup IAM Permissions
-**⚠️ Run this from Cloud Shell, NOT the workstation VM:**
+### Step 3: IAM Permissions (Run from Cloud Shell)
+
+*Run this from Cloud Shell (not the workstation VM). The compute SA cannot modify IAM policies.*
+
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe gpu-launchpad-playground --format='value(projectNumber)')
+PROJECT_NUMBER=$(gcloud projects describe <YOUR_PROJECT_ID> \
+  --format='value(projectNumber)')
 SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
 for ROLE in \
@@ -93,171 +91,352 @@ for ROLE in \
   roles/logging.logWriter roles/storage.objectAdmin \
   roles/file.editor roles/servicenetworking.networksAdmin \
   roles/iap.tunnelResourceAccessor; do
-  gcloud projects add-iam-policy-binding gpu-launchpad-playground \
+  gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> \
     --member="serviceAccount:${SA}" --role="${ROLE}" \
     --condition=None --quiet
 done
 ```
 
-### Step 4: Create Terraform State Buckets
+### Step 4: Create GCS Buckets for Terraform State
+
+Run this from Cloud Shell:
+
 ```bash
-gcloud storage buckets create gs://olmo3-h100-tf-state --location=us-central1 --uniform-bucket-level-access
-gcloud storage buckets create gs://olmo3-b200-tf-state --location=us-south1 --uniform-bucket-level-access
+gcloud storage buckets create gs://<YOUR_H100_TF_STATE_BUCKET> \
+  --project=<YOUR_PROJECT_ID> --location=us-central1 \
+  --uniform-bucket-level-access
+
+gcloud storage buckets create gs://<YOUR_B200_TF_STATE_BUCKET> \
+  --project=<YOUR_PROJECT_ID> --location=us-south1 \
+  --uniform-bucket-level-access
 ```
 
 ---
 
-## 🏗️ 2. Deploy GPU Clusters
+## 3. Deploy GPU Clusters
 
-Before deployment, ensure you have sufficient quota for `a3-megagpu-8g` (us-central1), `a4-highgpu-8g` (us-south1), and `HighScaleSSDStorageGibPerRegion`.
+### Cluster 1: B200 (a4-highgpu-8g) — us-south1-b
 
-### A. Deploy B200 Cluster (us-south1-b)
-The repo contains `infrastructure/b200-deployment.yaml`.
-From the workstation VM:
+**Step 6A: Create B200 Deployment File**
 ```bash
 cd ~/cluster-toolkit
-cp ~/B200_H100_FineTuning_Benchmark/infrastructure/b200-deployment.yaml .
+cat > b200-deployment.yaml << 'EOF'
+---
+terraform_backend_defaults:
+  type: gcs
+  configuration:
+    bucket: <YOUR_B200_TF_STATE_BUCKET>
+vars:
+  deployment_name: olmo3-b200
+  project_id: <YOUR_PROJECT_ID>
+  region: us-south1
+  zone: us-south1-b
+  a4h_cluster_size: 2
+  a4h_dws_flex_enabled: true
+  a4h_enable_spot_vm: false
+  a4h_reservation_name: ""
+EOF
+```
 
-./gcluster deploy -d b200-deployment.yaml \
+**Step 7A: Deploy B200 Cluster**
+```bash
+cd ~/cluster-toolkit
+./gcluster deploy \
+  -d b200-deployment.yaml \
   examples/machine-learning/a4-highgpu-8g/a4high-slurm-blueprint.yaml \
   --auto-approve
 ```
 
-### B. Deploy H100 Cluster (us-central1-a)
-The H100 `a3-megagpu-8g` requires patched blueprints to disable placement groups for DWS Flex compatibility and manage Filestore tiers. We provide these patched files in `infrastructure/`.
+**Step 8A: Connect & Validate B200**
+```bash
+# Find login node and create firewall rule
+NETWORK=$(gcloud compute instances describe olmo3b200-slurm-login-001 \
+  --zone=us-south1-b --format='get(networkInterfaces[0].network)' \
+  --project=<YOUR_PROJECT_ID> | awk -F/ '{print $NF}')
 
+gcloud compute firewall-rules create allow-ssh-b200 \
+  --network=$NETWORK --allow=tcp:22 \
+  --source-ranges=0.0.0.0/0 --project=<YOUR_PROJECT_ID>
+
+# SSH to login node
+gcloud compute ssh olmo3b200-slurm-login-001 \
+  --zone=us-south1-b --project=<YOUR_PROJECT_ID>
+
+# Verify GPUs on the B200 login node:
+srun -N 1 --gpus-per-node=8 --exclusive nvidia-smi
+```
+
+### Cluster 2: H100 (a3-megagpu-8g) — us-central1-a
+
+**Step 6B: Patch the Blueprint**
+The `a3-megagpu-8g` blueprint requires patches to work with DWS Flex and avoid Filestore quota limits.
 ```bash
 cd ~/cluster-toolkit
-cp ~/B200_H100_FineTuning_Benchmark/infrastructure/h100-deployment.yaml .
-cp ~/B200_H100_FineTuning_Benchmark/infrastructure/a3mega-slurm-blueprint-patched.yaml .
+cp examples/machine-learning/a3-megagpu-8g/a3mega-slurm-blueprint.yaml \
+   a3mega-slurm-blueprint-patched.yaml
 
-./gcluster deploy -d h100-deployment.yaml \
+# Disable placement for DWS Flex
+sed -i '/dws_flex:/i\      enable_placement: false' \
+  a3mega-slurm-blueprint-patched.yaml
+
+# Switch Filestore to BASIC_SSD
+sed -i 's/filestore_tier: HIGH_SCALE_SSD/filestore_tier: BASIC_SSD/' \
+  a3mega-slurm-blueprint-patched.yaml
+sed -i 's/size_gb: 10240/size_gb: 2560/' \
+  a3mega-slurm-blueprint-patched.yaml
+```
+
+**Step 7B: Create H100 Deployment YAML**
+```bash
+cd ~/cluster-toolkit
+cat > h100-deployment.yaml << 'EOF'
+---
+terraform_backend_defaults:
+  type: gcs
+  configuration:
+    bucket: <YOUR_H100_TF_STATE_BUCKET>
+vars:
+  deployment_name: olmo3-h100
+  project_id: <YOUR_PROJECT_ID>
+  region: us-central1
+  zone: us-central1-a
+  network_name_system: olmo3-h100-sys-net
+  subnetwork_name_system: olmo3-h100-sys-subnet
+  enable_ops_agent: true
+  enable_nvidia_dcgm: true
+  enable_nvidia_persistenced: true
+  disk_size_gb: 200
+  final_image_family: slurm-olmo3-h100
+  slurm_cluster_name: olmo3h100
+  a3mega_cluster_size: 2
+  a3mega_reservation_name: ""
+  a3mega_dws_flex_enabled: true
+  a3mega_enable_spot_vm: false
+EOF
+```
+
+**Step 8B: Deploy the H100 Cluster**
+```bash
+cd ~/cluster-toolkit
+./gcluster deploy \
+  -d h100-deployment.yaml \
   a3mega-slurm-blueprint-patched.yaml \
   --auto-approve
 ```
 
-### C. Connect to Clusters & Authenticate NGC
+**Step 9B: Connect & Validate H100**
 ```bash
-# Example SSH to B200
-gcloud compute ssh olmo3b200-slurm-login-001 --zone=us-south1-b
+NETWORK=$(gcloud compute instances describe olmo3h100-login-001 \
+  --zone=us-central1-a --format='get(networkInterfaces[0].network)' \
+  --project=<YOUR_PROJECT_ID> | awk -F/ '{print $NF}')
 
-# Setup NGC Credentials (Run on each cluster login node)
-mkdir -p ~/.config/enroot/
-cat > ~/.config/enroot/.credentials << 'CREDS'
-machine nvcr.io login $oauthtoken password YOUR_NGC_API_KEY
-machine authn.nvidia.com login $oauthtoken password YOUR_NGC_API_KEY
-CREDS
-```
+gcloud compute firewall-rules create allow-ssh-h100 \
+  --network=$NETWORK --allow=tcp:22 \
+  --source-ranges=0.0.0.0/0 --project=<YOUR_PROJECT_ID>
 
-Verify GPU readiness:
-```bash
+gcloud compute ssh olmo3h100-login-001 \
+  --zone=us-central1-a --project=<YOUR_PROJECT_ID>
+
+# Verify GPUs on the H100 login node:
 srun -N 1 --gpus-per-node=8 --exclusive nvidia-smi
 ```
 
 ---
 
-## 📊 3. Generating Simulated Training Data
+## 4. Post-Deployment Steps (Both Clusters)
 
-We use a simulated **Multimodal Malware Analysis Dataset** to benchmark without exposing proprietary threat data. This dataset mimics production data perfectly, creating sequences up to the full **65,000 token context window** of OLMo-3 using hex-encoded binaries.
-
-Run the generation script provided in the repository:
+**Step 10: Set Up NGC Credentials**
+SSH into each cluster's login node and run:
 ```bash
-# Clone the repo on the cluster login node
-git clone https://github.com/MG-Cafe/B200_H100_FineTuning_Benchmark.git ~/olmo3-finetune
-cd ~/olmo3-finetune
-
-# Generate 500 samples
-python h100_finetuning/fsdp_scripts/generate_training_data.py
-```
-This produces `simulated_training_data/train.jsonl` (roughly 140MB), split equally between benign and malicious samples simulating deep PE binary analysis.
-
----
-
-## 🚂 4. Fine-Tuning & Benchmarking Guide
-
-Once data is generated, you can launch the distributed fine-tuning job across the 16 GPUs. FSDP configuration, training script, and submit scripts are pre-configured in the repository.
-
-### Directory Structure & Required Files
-```text
-~/olmo3-finetune/
-├── h100_finetuning/
-│   ├── fsdp_scripts/
-│   │   ├── train.py
-│   │   └── accelerate_fsdp_config.yaml
-│   └── submit_h100.sh
-└── simulated_training_data/
-    └── train.jsonl
+mkdir -p ~/.config/enroot/
+cat > ~/.config/enroot/.credentials << 'CREDS'
+machine nvcr.io login $oauthtoken password <YOUR_NGC_API_KEY>
+machine authn.nvidia.com login $oauthtoken password <YOUR_NGC_API_KEY>
+CREDS
 ```
 
-### Step 1: Submit the Slurm Job
-For H100 cluster:
+**Step 11: Verify OLMo-3 Readiness**
 ```bash
-cd ~/olmo3-finetune
-sbatch h100_finetuning/submit_h100.sh
+srun -N 1 --gpus-per-node=8 --exclusive \
+  --container-image=nvcr.io#nvidia/pytorch:24.12-py3 \
+  --container-writable \
+  bash -c '
+    pip install "transformers<4.52" --quiet &&
+    python -c "
+from transformers import AutoTokenizer
+print(\"OLMo-3 32B tokenizer loading...\")
+tok = AutoTokenizer.from_pretrained(\"allenai/Olmo-3-1125-32B\")
+print(f\"Vocab size: {tok.vocab_size}\")
+print(\"SUCCESS: Ready for fine-tuning\")
+"'
 ```
 
-For B200 cluster:
+**Step 12: Verify DCGM (GPU Monitoring)**
 ```bash
-cd ~/olmo3-finetune
-sbatch b200_finetuning/submit_b200_benchmark.sh
-```
-
-### Step 2: Monitoring
-```bash
-squeue --user=$(whoami)
-tail -f $(ls -t ~/logs/olmo3-h100-*.err | head -1) # FSDP logs & diagnostics
+srun -N 1 --gpus-per-node=8 --exclusive dcgmi discovery -l
 ```
 
 ---
 
-## ⚠️ 5. Critical Technical Learnings: OOM & FSDP Issues
+## 5. Switching to Reservations
 
-During this benchmark deployment, we encountered significant technical challenges with **Accelerate 1.5.2's FSDP** implementation for OLMo-3. Over 9 jobs (Jobs 24–32), we observed extreme Out Of Memory (OOM) failures: allocating 77+ GB of 80 GB available memory during the backward pass regardless of sequence lengths (4096 vs 2048).
+When dedicated reservations activate, update from DWS Flex:
 
-### The Root Cause: `TRANSFORMER_BASED_WRAP` Silent Failure
-The accelerate FSDP configuration failed to resolve the class name `Olmo3DecoderLayer`. Because of this, **the entire 32.2B parameter model was treated as a single FSDP unit**.
-During the forward pass, all 64GB of parameters were all-gathered onto each GPU simultaneously instead of one ~1GB layer at a time.
-
-### Summary of Broken Features in Accelerate 1.5.2
-| Feature | YAML Config | Actual Behavior in accelerate 1.5.2 |
-| :--- | :--- | :--- |
-| **Layer wrapping** | `TRANSFORMER_BASED_WRAP: Olmo3DecoderLayer` | **Silent failure:** entire model = 1 FSDP unit |
-| **Activation checkpointing** | `fsdp_activation_checkpointing: true` | Completely ignored |
-| **CPU offloading** | `fsdp_offload_params: true` | Works at init, **broken during forward pass** |
-| **SIZE_BASED_WRAP** | `fsdp_min_num_params: 100000000` | **Works correctly** (196 units created) |
-
-### Workarounds Implemented
-1. Switched `fsdp_auto_wrap_policy` to `SIZE_BASED_WRAP` with `fsdp_min_num_params: 100000000` in `accelerate_fsdp_config.yaml`.
-2. Verified per-layer wrapping by counting FSDP units in `train.py`:
-   ```python
-   from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-   fsdp_units = sum(1 for m in model.modules() if isinstance(m, FSDP))
-   # 1-2 = BROKEN (will OOM)
-   # 65+ = CORRECT (per-layer wrapping working)
-   ```
-3. Pinned to PyTorch 2.7+ (NGC `25.02-py3` container) and `transformers<4.52`. 
-4. **Recommendation:** Switch to **DeepSpeed ZeRO-3** for working parameter partitioning and offloading if accelerate FSDP continues to struggle.
-
-### Memory Logging 
-We enforce memory logging at every stage inside `train.py` to trace explosions:
-```
-[MEM after-fsdp-wrap]    allocated=12.09GB   <- Shards only (good)
-[MEM before-training]    allocated=12.09GB   <- No growth (good)
-[During backward pass]   allocated=77.02GB   <- 65GB jump! (bad)
-```
-
----
-
-## 🧽 Teardown
-To safely tear down the infrastructure:
+**B200 Cluster:**
+Edit `b200-deployment.yaml` to set `a4h_dws_flex_enabled: false` and `a4h_reservation_name: <YOUR_B200_RESERVATION_NAME>`. Then redeploy:
 ```bash
 cd ~/cluster-toolkit
-./gcluster destroy olmo3-h100 --auto-approve
-
-# Disable filestore deletion protection for B200 first
-gcloud filestore instances update <INSTANCE_NAME> --no-deletion-protection --zone=us-south1-b
-./gcluster destroy olmo3-b200 --auto-approve
+./gcluster deploy -d b200-deployment.yaml \
+  examples/machine-learning/a4-highgpu-8g/a4high-slurm-blueprint.yaml \
+  --auto-approve
 ```
 
-## 📜 License
-Please refer to the repository license for further usage conditions.
+**H100 Cluster:**
+Edit `h100-deployment.yaml` to set `a3mega_dws_flex_enabled: false` and `a3mega_reservation_name: <YOUR_H100_RESERVATION_NAME>`. Edit `a3mega-slurm-blueprint-patched.yaml` to change `enable_placement: false` back to `true`.
+```bash
+cd ~/cluster-toolkit
+./gcluster deploy -d h100-deployment.yaml \
+  a3mega-slurm-blueprint-patched.yaml \
+  --only primary,cluster --auto-approve -w
+```
+
+---
+
+## 6. Simulated Training Data Generation
+
+The benchmark requires long-context data to simulate multimodal malware analysis (up to 65K tokens per sample using hex-encoded binaries).
+
+To generate the dataset, clone this repository on your cluster login node and run the generator:
+
+```bash
+git clone https://github.com/MG-Cafe/B200_H100_FineTuning_Benchmark.git ~/olmo3-finetune
+cd ~/olmo3-finetune
+python h100_finetuning/fsdp_scripts/generate_training_data.py
+```
+This script will produce `simulated_training_data/train.jsonl` containing 500 samples (roughly 140 MB).
+
+---
+
+## 7. Fine-Tuning Execution Guide
+
+The following steps launch the distributed fine-tuning job across 16 GPUs using PyTorch FSDP.
+
+**Step 1: SSH into the Slurm Login Node**
+```bash
+gcloud compute ssh olmo3h100-login-001 --zone=us-central1-a --project=<YOUR_PROJECT_ID>
+```
+Verify nodes are available:
+```bash
+sinfo
+```
+
+**Step 2: Create the Directory Structure**
+```bash
+mkdir -p ~/olmo3-finetune/scripts
+mkdir -p ~/olmo3-finetune/simulated_training_data
+mkdir -p ~/logs
+```
+
+**Step 3: Upload or Link Training Data**
+Ensure your `train.jsonl` from the generation step is located at `~/olmo3-finetune/simulated_training_data/train.jsonl`.
+```bash
+wc -l ~/olmo3-finetune/simulated_training_data/train.jsonl
+# Should output 500
+```
+
+**Step 4: Deploy the FSDP Config (YAML)**
+Run this exact block to configure Accelerate:
+```bash
+cat > ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml << 'EOF'
+compute_environment: LOCAL_MACHINE
+debug: false
+distributed_type: FSDP
+downcast_bf16: "no"
+fsdp_config:
+  fsdp_sharding_strategy: FULL_SHARD
+  fsdp_activation_checkpointing: true
+  fsdp_auto_wrap_policy: SIZE_BASED_WRAP
+  fsdp_min_num_params: 100000000
+  fsdp_offload_params: true
+  fsdp_state_dict_type: SHARDED_STATE_DICT
+  fsdp_forward_prefetch: true
+  fsdp_backward_prefetch: BACKWARD_PRE
+  fsdp_sync_module_states: true
+  fsdp_use_orig_params: true
+  fsdp_cpu_ram_efficient_loading: true
+machine_rank: 0
+main_training_function: main
+mixed_precision: bf16
+num_machines: 2
+num_processes: 16
+rdzv_backend: c10d
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+EOF
+```
+
+**Step 5: Deploy the Training & Submit Scripts**
+Copy the `train.py` and `submit_h100.sh` (or `submit_b200.sh`) scripts provided in this repository into your working directory:
+```bash
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/fsdp_scripts/train.py ~/olmo3-finetune/scripts/train.py
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/submit_h100.sh ~/olmo3-finetune/submit_h100.sh
+chmod +x ~/olmo3-finetune/submit_h100.sh
+```
+
+**Step 6: Verify All Files Are Correct**
+```bash
+# Check YAML has SIZE_BASED_WRAP
+grep 'SIZE_BASED' ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml
+
+# Check train.py has FSDP diagnostic
+grep 'count_fsdp_units' ~/olmo3-finetune/scripts/train.py
+
+# Check submit script has correct container
+grep 'container-image' ~/olmo3-finetune/submit_h100.sh
+```
+
+**Step 7: Clean Up Previous Runs (If Any)**
+```bash
+scancel --user=$(whoami)
+rm -rf ~/olmo3-finetune/output-h100-*/
+rm -rf ~/olmo3-finetune/output-b200-*/
+```
+
+**Step 8: Submit the Job**
+```bash
+# For H100 cluster:
+sbatch ~/olmo3-finetune/submit_h100.sh
+
+# For B200 cluster (using the respective script):
+# sbatch ~/olmo3-finetune/submit_b200.sh
+```
+
+**Step 9: Monitor the Job**
+```bash
+squeue --user=$(whoami)
+
+# Watch the error log (diagnostics):
+tail -f $(ls -t ~/logs/olmo3-h100-*.err | head -1)
+
+# Watch the output log:
+tail -f $(ls -t ~/logs/olmo3-h100-*.out | head -1)
+
+# Search for key memory diagnostics in a completed job:
+grep -E "OutOfMemory|MEM |FSDP units|Step |TRAINING COMPLETE" \
+  ~/logs/olmo3-h100-*.err | head -30
+```
+
+**Step 10: Collect Results**
+After training is complete, results are saved in the output directory.
+```bash
+ls ~/olmo3-finetune/output-h100-*/training_metrics_h100.csv
+cat ~/olmo3-finetune/output-h100-*/training_summary_h100.json
+ls ~/olmo3-finetune/output-h100-*/nsight_traces_h100/
+ls ~/olmo3-finetune/output-*/dcgm_node_*.csv
+
+# Upload to GCS
+gsutil -m cp -r "$(ls -dt ~/olmo3-finetune/output-h100-*/ | head -1)" gs://<YOUR_RESULTS_BUCKET>/h100/
+```
