@@ -2109,7 +2109,3 @@ Expected failure signature:
 ```
 
 ---
-
-## License
-
-This repository is provided for benchmarking and educational purposes. The OLMo-3 model is licensed under its respective terms by Allen Institute for AI. NVIDIA software components are subject to NVIDIA's license agreements.
