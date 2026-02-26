@@ -245,9 +245,8 @@ srun -N 1 --gpus-per-node=8 --exclusive nvidia-smi
 
 ### Cluster 2: H100 (a3-megagpu-8g) — us-central1-a
 
-Uses `a3-megagpu-8g` with TCPXO networking. Requires blueprint patches for DWS Flex compatibility and Filestore quota workaround.
+`a3-megagpu-8g` requires blueprint patches for DWS Flex compatibility and Filestore quota workaround.
 
-> **Why a3-megagpu-8g instead of a3-highgpu-8g?** The `a3-highgpu-8g` blueprint requires private TCPX kernel credentials. `a3-megagpu-8g` uses TCPXO which needs no credentials. Same H100 80GB GPUs.
 
 #### Step 6B: Patch the Blueprint
 
