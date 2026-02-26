@@ -7,8 +7,8 @@ terraform_backend_defaults:
 vars:
   deployment_name: olmo3-b200
   project_id: <YOUR_PROJECT_ID>
-  region: us-south1
-  zone: us-south1-b
+  region: <B200_REGION>
+  zone: <B200_ZONE>
 
   # Cluster size: number of a4-highgpu-8g VMs (each has 8x B200)
   a4h_cluster_size: 2

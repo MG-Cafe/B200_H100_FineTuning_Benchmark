@@ -49,10 +49,10 @@ Request these quotas **before** deploying. Increases can take hours or days.
 
 | Quota | Region | Needed For |
 |---|---|---|
-| NVIDIA H100 GPUs (16) | `us-central1` | H100 cluster (`a3-megagpu-8g`) |
-| NVIDIA B200 GPUs (16) | `us-south1` | B200 cluster (`a4-highgpu-8g`) |
-| `SsdStorageGibPerRegion` | `us-central1` | Filestore (BASIC_SSD fallback for H100) |
-| `HighScaleSSDStorageGibPerRegion` | `us-south1` | Filestore for B200 (or use BASIC_SSD) |
+| NVIDIA H100 GPUs (16) | `<H100_REGION>` | H100 cluster (`a3-megagpu-8g`) |
+| NVIDIA B200 GPUs (16) | `<B200_REGION>` | B200 cluster (`a4-highgpu-8g`) |
+| `SsdStorageGibPerRegion` | `<H100_REGION>` | Filestore (BASIC_SSD fallback for H100) |
+| `HighScaleSSDStorageGibPerRegion` | `<B200_REGION>` | Filestore for B200 (or use BASIC_SSD) |
 
 ### 1.3 Placeholder Conventions
 
@@ -70,6 +70,10 @@ Throughout this guide, replace placeholders with your own values:
 | `<B200_LOGIN_NODE>` | B200 cluster Slurm login node name | `olmo3b200-slurm-login-001` |
 | `<H100_LOGIN_NODE>` | H100 cluster Slurm login node name | `olmo3h100-login-001` |
 | `<HOME_DIR>` | Your home directory on the cluster | `/home/sa_12345` (check with `echo $HOME`) |
+| `<H100_REGION>` | GCP region for H100 cluster | `us-central1` |
+| `<H100_ZONE>` | GCP zone for H100 cluster | `us-central1-a` |
+| `<B200_REGION>` | GCP region for B200 cluster | `us-south1` |
+| `<B200_ZONE>` | GCP zone for B200 cluster | `us-south1-b` |
 
 ---
 
@@ -91,7 +95,7 @@ gcloud services enable \
 # Create workstation VM (you can change the name)
 gcloud compute instances create <WORKSTATION_VM_NAME> \
   --project=<YOUR_PROJECT_ID> \
-  --zone=us-central1-a \
+  --zone=<H100_ZONE> \
   --machine-type=e2-standard-8 \
   --boot-disk-size=200GB \
   --boot-disk-type=pd-balanced \
@@ -101,7 +105,7 @@ gcloud compute instances create <WORKSTATION_VM_NAME> \
   --metadata=enable-oslogin=TRUE
 
 # SSH into it
-gcloud compute ssh <WORKSTATION_VM_NAME> --zone=us-central1-a
+gcloud compute ssh <WORKSTATION_VM_NAME> --zone=<H100_ZONE>
 ```
 
 ### Step 2: Install Dependencies on Workstation
@@ -163,11 +167,11 @@ done
 
 ```bash
 gcloud storage buckets create gs://<YOUR_H100_TF_STATE_BUCKET> \
-  --project=<YOUR_PROJECT_ID> --location=us-central1 \
+  --project=<YOUR_PROJECT_ID> --location=<H100_REGION> \
   --uniform-bucket-level-access
 
 gcloud storage buckets create gs://<YOUR_B200_TF_STATE_BUCKET> \
-  --project=<YOUR_PROJECT_ID> --location=us-south1 \
+  --project=<YOUR_PROJECT_ID> --location=<B200_REGION> \
   --uniform-bucket-level-access
 ```
 
@@ -175,7 +179,7 @@ gcloud storage buckets create gs://<YOUR_B200_TF_STATE_BUCKET> \
 
 ## 3. Deploy GPU Clusters
 
-### Cluster 1: B200 (a4-highgpu-8g) — us-south1-b
+### Cluster 1: B200 (a4-highgpu-8g) — <B200_ZONE>
 
 Uses the official A4 High blueprint with first-class DWS Flex support. No patches needed.
 
@@ -192,8 +196,8 @@ terraform_backend_defaults:
 vars:
   deployment_name: olmo3-b200
   project_id: <YOUR_PROJECT_ID>
-  region: us-south1
-  zone: us-south1-b
+  region: <B200_REGION>
+  zone: <B200_ZONE>
   a4h_cluster_size: 2
   a4h_dws_flex_enabled: true
   a4h_enable_spot_vm: false
@@ -226,7 +230,7 @@ gcloud compute instances list --project=<YOUR_PROJECT_ID> \
 
 # Create SSH firewall rule
 NETWORK=$(gcloud compute instances describe <B200_LOGIN_NODE> \
-  --zone=us-south1-b --format='get(networkInterfaces[0].network)' \
+  --zone=<B200_ZONE> --format='get(networkInterfaces[0].network)' \
   --project=<YOUR_PROJECT_ID> | awk -F/ '{print $NF}')
 
 gcloud compute firewall-rules create allow-ssh-b200 \
@@ -235,7 +239,7 @@ gcloud compute firewall-rules create allow-ssh-b200 \
 
 # SSH to login node
 gcloud compute ssh <B200_LOGIN_NODE> \
-  --zone=us-south1-b --project=<YOUR_PROJECT_ID>
+  --zone=<B200_ZONE> --project=<YOUR_PROJECT_ID>
 ```
 
 On the B200 login node:
@@ -247,7 +251,7 @@ srun -N 1 --gpus-per-node=8 --exclusive nvidia-smi
 
 ---
 
-### Cluster 2: H100 (a3-megagpu-8g) — us-central1-a
+### Cluster 2: H100 (a3-megagpu-8g) — <H100_ZONE>
 
 `a3-megagpu-8g` requires blueprint patches for DWS Flex compatibility and Filestore quota workaround.
 
@@ -293,8 +297,8 @@ terraform_backend_defaults:
 vars:
   deployment_name: olmo3-h100
   project_id: <YOUR_PROJECT_ID>
-  region: us-central1
-  zone: us-central1-a
+  region: <H100_REGION>
+  zone: <H100_ZONE>
   network_name_system: olmo3-h100-sys-net
   subnetwork_name_system: olmo3-h100-sys-subnet
   enable_ops_agent: true
@@ -335,7 +339,7 @@ gcloud compute instances list --project=<YOUR_PROJECT_ID> \
 
 # Create SSH firewall rule
 NETWORK=$(gcloud compute instances describe <H100_LOGIN_NODE> \
-  --zone=us-central1-a --format='get(networkInterfaces[0].network)' \
+  --zone=<H100_ZONE> --format='get(networkInterfaces[0].network)' \
   --project=<YOUR_PROJECT_ID> | awk -F/ '{print $NF}')
 
 gcloud compute firewall-rules create allow-ssh-h100 \
@@ -344,7 +348,7 @@ gcloud compute firewall-rules create allow-ssh-h100 \
 
 # SSH to login node
 gcloud compute ssh <H100_LOGIN_NODE> \
-  --zone=us-central1-a --project=<YOUR_PROJECT_ID>
+  --zone=<H100_ZONE> --project=<YOUR_PROJECT_ID>
 ```
 
 On the H100 login node:
@@ -539,75 +543,7 @@ cp ~/B200_H100_FineTuning_Benchmark/b200_finetuning/scripts/malware_dataset.py \
    ~/olmo3-nemo/scripts/malware_dataset.py
 ```
 
-If copying from the repo is not possible, create it with a Python writer:
-
-```bash
-cat > /tmp/write_dataset.py << 'PYEOF'
-import os
-home = os.environ["HOME"]
-
-code = '''"""Custom dataset for malware analysis JSONL format."""
-import json
-from torch.utils.data import Dataset
-
-
-class MalwareAnalysisDataset(Dataset):
-    def __init__(self, path_or_dataset, tokenizer,
-                 split="train", max_length=2048):
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.samples = []
-        with open(path_or_dataset, "r") as f:
-            for line in f:
-                self.samples.append(json.loads(line.strip()))
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        record = self.samples[idx]
-        conversations = record["conversations"]
-        system_msg = conversations[0]["content"]
-        user_msg = conversations[1]["content"]
-        assistant_msg = conversations[2]["content"]
-
-        if "<binary>" in user_msg and "</binary>" in user_msg:
-            start = user_msg.index("<binary>") + len("<binary>")
-            end = user_msg.index("</binary>")
-            binary_hex = user_msg[start:end]
-            question = user_msg[end + len("</binary>"):]
-            reserved_chars = (self.max_length - 200) * 2
-            if len(binary_hex) > reserved_chars:
-                binary_hex = binary_hex[:reserved_chars]
-            user_msg = "<binary>" + binary_hex + "</binary>" + question
-
-        full_text = (
-            "<|system|>\\n" + system_msg + "\\n"
-            + "<|user|>\\n" + user_msg + "\\n"
-            + "<|assistant|>\\n" + assistant_msg + "<|endoftext|>"
-        )
-
-        encoding = self.tokenizer(
-            full_text,
-            max_length=self.max_length,
-            truncation=True,
-        )
-
-        input_ids = encoding["input_ids"]
-        labels = list(input_ids)
-
-        return {
-            "input_ids": input_ids,
-            "labels": labels,
-        }
-'''
-
-with open(os.path.join(home, "olmo3-nemo/scripts/malware_dataset.py"), "w") as f:
-    f.write(code)
-print("Dataset adapter written successfully")
-PYEOF
-python3 /tmp/write_dataset.py
-```
+> The source code is available at [`b200_finetuning/scripts/malware_dataset.py`](b200_finetuning/scripts/malware_dataset.py) in this repository.
 
 #### Training Entry Point (`scripts/finetune.py`)
 
@@ -618,359 +554,67 @@ head -5 ~/olmo3-nemo/scripts/finetune.py
 # Should show: from __future__ import annotations
 ```
 
-If missing, create it:
+If missing, copy from this repository:
 
 ```bash
-cat > ~/olmo3-nemo/scripts/finetune.py << 'EOF'
-from __future__ import annotations
-
-from nemo_automodel.components.config._arg_parser import parse_args_and_load_config
-from nemo_automodel.recipes.llm.train_ft import TrainFinetuneRecipeForNextTokenPrediction
-
-
-def main(default_config_path="examples/llm_finetune/llama3_2/llama3_2_1b_hellaswag.yaml"):
-    cfg = parse_args_and_load_config(default_config_path)
-    recipe = TrainFinetuneRecipeForNextTokenPrediction(cfg)
-    recipe.setup()
-    recipe.run_train_validation_loop()
-
-
-if __name__ == "__main__":
-    main()
-EOF
+cp ~/B200_H100_FineTuning_Benchmark/b200_finetuning/scripts/finetune.py ~/olmo3-nemo/scripts/finetune.py
 ```
+
+> The source code is available at [`b200_finetuning/scripts/finetune.py`](b200_finetuning/scripts/finetune.py) in this repository.
 
 #### YAML Config — B200 (`configs/olmo3_32b_b200.yaml`)
 
-Use a Python writer to generate the config with correct absolute paths:
+Copy from this repository and replace `<HOME_DIR>` with your actual home directory:
 
 ```bash
-cat > /tmp/write_b200_yaml.py << 'PYEOF'
-import os
-home = os.environ["HOME"]
+cp ~/B200_H100_FineTuning_Benchmark/b200_finetuning/configs/olmo3_32b_b200.yaml \
+   ~/olmo3-nemo/configs/olmo3_32b_b200.yaml
 
-yaml_content = """# OLMo-3 32B SFT on B200 (2 nodes x 8 GPUs = 16 GPUs)
-# NeMo AutoModel - nemo-automodel:25.11.00 container
-
-step_scheduler:
-  global_batch_size: 16
-  local_batch_size: 1
-  ckpt_every_steps: 50
-  val_every_steps: 9999
-  num_epochs: 1
-
-dist_env:
-  backend: nccl
-  timeout_minutes: 30
-
-rng:
-  _target_: nemo_automodel.components.training.rng.StatefulRNG
-  seed: 42
-  ranked: true
-
-model:
-  _target_: nemo_automodel.NeMoAutoModelForCausalLM.from_pretrained
-  pretrained_model_name_or_path: allenai/Olmo-3-1125-32B
-
-checkpoint:
-  enabled: true
-  checkpoint_dir: {home}/olmo3-nemo/output-b200/checkpoints
-  model_save_format: safetensors
-  save_consolidated: false
-
-distributed:
-  _target_: nemo_automodel.components.distributed.fsdp2.FSDP2Manager
-  dp_size: null
-  tp_size: 1
-  cp_size: 1
-  sequence_parallel: false
-  activation_checkpointing: true
-
-loss_fn:
-  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
-
-dataset:
-  _target_: scripts.malware_dataset.MalwareAnalysisDataset
-  path_or_dataset: {home}/olmo3-nemo/data/train.jsonl
-  split: train
-  max_length: 2048
-
-packed_sequence:
-  packed_sequence_size: 0
-
-dataloader:
-  _target_: torchdata.stateful_dataloader.StatefulDataLoader
-  collate_fn: nemo_automodel.components.datasets.utils.default_collater
-  shuffle: true
-
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 2.0e-5
-  betas: [0.9, 0.95]
-  weight_decay: 0.1
-  eps: 1.0e-8
-""".format(home=home)
-
-with open(os.path.join(home, "olmo3-nemo/configs/olmo3_32b_b200.yaml"), "w") as f:
-    f.write(yaml_content)
-print("B200 YAML written successfully")
-PYEOF
-python3 /tmp/write_b200_yaml.py
+# Replace placeholder with your actual home directory
+sed -i "s|<HOME_DIR>|$HOME|g" ~/olmo3-nemo/configs/olmo3_32b_b200.yaml
 ```
+
+> The template is available at [`b200_finetuning/configs/olmo3_32b_b200.yaml`](b200_finetuning/configs/olmo3_32b_b200.yaml) in this repository.
 
 #### YAML Config — H100 (`configs/olmo3_32b_h100.yaml`)
 
-Identical to B200 except the checkpoint output path:
+Identical to B200 except the checkpoint output path. Copy from this repository:
 
 ```bash
-cat > /tmp/write_h100_yaml.py << 'PYEOF'
-import os
-home = os.environ["HOME"]
+cp ~/B200_H100_FineTuning_Benchmark/b200_finetuning/configs/olmo3_32b_h100.yaml \
+   ~/olmo3-nemo/configs/olmo3_32b_h100.yaml
 
-yaml_content = """# OLMo-3 32B SFT on H100 (2 nodes x 8 GPUs = 16 GPUs)
-# NeMo AutoModel - nemo-automodel:25.11.00 container
-
-step_scheduler:
-  global_batch_size: 16
-  local_batch_size: 1
-  ckpt_every_steps: 50
-  val_every_steps: 9999
-  num_epochs: 1
-
-dist_env:
-  backend: nccl
-  timeout_minutes: 30
-
-rng:
-  _target_: nemo_automodel.components.training.rng.StatefulRNG
-  seed: 42
-  ranked: true
-
-model:
-  _target_: nemo_automodel.NeMoAutoModelForCausalLM.from_pretrained
-  pretrained_model_name_or_path: allenai/Olmo-3-1125-32B
-
-checkpoint:
-  enabled: true
-  checkpoint_dir: {home}/olmo3-nemo/output-h100/checkpoints
-  model_save_format: safetensors
-  save_consolidated: false
-
-distributed:
-  _target_: nemo_automodel.components.distributed.fsdp2.FSDP2Manager
-  dp_size: null
-  tp_size: 1
-  cp_size: 1
-  sequence_parallel: false
-  activation_checkpointing: true
-
-loss_fn:
-  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
-
-dataset:
-  _target_: scripts.malware_dataset.MalwareAnalysisDataset
-  path_or_dataset: {home}/olmo3-nemo/data/train.jsonl
-  split: train
-  max_length: 2048
-
-packed_sequence:
-  packed_sequence_size: 0
-
-dataloader:
-  _target_: torchdata.stateful_dataloader.StatefulDataLoader
-  collate_fn: nemo_automodel.components.datasets.utils.default_collater
-  shuffle: true
-
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 2.0e-5
-  betas: [0.9, 0.95]
-  weight_decay: 0.1
-  eps: 1.0e-8
-""".format(home=home)
-
-with open(os.path.join(home, "olmo3-nemo/configs/olmo3_32b_h100.yaml"), "w") as f:
-    f.write(yaml_content)
-print("H100 YAML written successfully")
-PYEOF
-python3 /tmp/write_h100_yaml.py
+# Replace placeholder with your actual home directory
+sed -i "s|<HOME_DIR>|$HOME|g" ~/olmo3-nemo/configs/olmo3_32b_h100.yaml
 ```
+
+> The template is available at [`b200_finetuning/configs/olmo3_32b_h100.yaml`](b200_finetuning/configs/olmo3_32b_h100.yaml) in this repository.
 
 ### 6.5 Deploy Benchmark Submit Scripts
 
 #### B200 Benchmark Script (`submit_b200_benchmark.sh`)
 
+Copy from this repository:
+
 ```bash
-cat > /tmp/write_b200_bench.py << 'PYEOF'
-import os
-home = os.environ["HOME"]
-
-script = """#!/bin/bash
-#SBATCH --job-name=olmo3-bench-b200
-#SBATCH --partition=a4high
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=8
-#SBATCH --exclusive
-#SBATCH --time=04:00:00
-#SBATCH --output={home}/logs/olmo3-bench-b200-%j.out
-#SBATCH --error={home}/logs/olmo3-bench-b200-%j.err
-
-set -euo pipefail
-WORK_DIR="{home}/olmo3-nemo"
-BENCH_DIR="{home}/olmo3-nemo/benchmark-b200"
-CONTAINER="nvcr.io#nvidia/nemo-automodel:25.11.00"
-
-HEAD_NODE=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -1)
-HEAD_ADDR=$(srun -N1 -n1 -w $HEAD_NODE hostname -I | awk '{{print $1}}')
-
-echo "=== B200 BENCHMARK START ==="
-echo "HEAD_NODE: $HEAD_NODE"
-echo "HEAD_ADDR: $HEAD_ADDR"
-echo "NODES: $SLURM_JOB_NUM_NODES"
-date -u
-mkdir -p $BENCH_DIR
-
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node=1 \\
-  --gpus-per-node=8 \\
-  --container-image=$CONTAINER \\
-  --container-writable \\
-  --container-mounts="$WORK_DIR:$WORK_DIR" \\
-  bash -c '
-  set -e
-  export HF_HOME='$WORK_DIR'/.hf_cache
-  export TOKENIZERS_PARALLELISM=false
-  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-  export NCCL_DEBUG=WARN
-  export NCCL_SOCKET_IFNAME=enp0s19
-  export NCCL_IB_DISABLE=0
-  export PYTHONPATH='$WORK_DIR':$PYTHONPATH
-
-  mkdir -p '$BENCH_DIR'
-  date -u > '$BENCH_DIR'/start_time.txt
-  nvidia-smi dmon -s u -d 2 > '$BENCH_DIR'/gpu_util.csv 2>&1 &
-  SMI_PID=$!
-  nvidia-smi --query-gpu=name,memory.total --format=csv > '$BENCH_DIR'/gpu_info.csv 2>&1
-
-  nsys profile \\
-    --trace=cuda,nvtx,osrt,cudnn,cublas \\
-    --cuda-memory-usage=true \\
-    --delay=30 \\
-    --duration=300 \\
-    --output='$BENCH_DIR'/nsys_b200_rank$SLURM_PROCID \\
-    --force-overwrite=true \\
-    torchrun \\
-      --nnodes=$SLURM_JOB_NUM_NODES \\
-      --nproc-per-node=8 \\
-      --node-rank=$SLURM_PROCID \\
-      --master-addr='$HEAD_ADDR' \\
-      --master-port=29500 \\
-      '$WORK_DIR'/scripts/finetune.py \\
-      --config '$WORK_DIR'/configs/olmo3_32b_b200.yaml
-
-  date -u > '$BENCH_DIR'/end_time.txt
-  kill $SMI_PID 2>/dev/null || true
-  '
-
-echo "=== B200 BENCHMARK END ==="
-date -u
-echo "BENCHMARK COMPLETE"
-""".format(home=home)
-
-with open(os.path.join(home, "olmo3-nemo/submit_b200_benchmark.sh"), "w") as f:
-    f.write(script)
-os.chmod(os.path.join(home, "olmo3-nemo/submit_b200_benchmark.sh"), 0o755)
-print("B200 benchmark script written successfully")
-PYEOF
-python3 /tmp/write_b200_bench.py
+cp ~/B200_H100_FineTuning_Benchmark/b200_finetuning/submit_b200_benchmark.sh \
+   ~/olmo3-nemo/submit_b200_benchmark.sh
+chmod +x ~/olmo3-nemo/submit_b200_benchmark.sh
 ```
+
+> The script is available at [`b200_finetuning/submit_b200_benchmark.sh`](b200_finetuning/submit_b200_benchmark.sh) in this repository.
 
 #### H100 NeMo Benchmark Script (`submit_h100_benchmark.sh`)
 
+Copy from this repository:
+
 ```bash
-cat > /tmp/write_h100_bench.py << 'PYEOF'
-import os
-home = os.environ["HOME"]
-
-script = """#!/bin/bash
-#SBATCH --job-name=olmo3-bench-h100
-#SBATCH --partition=a3mega
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=8
-#SBATCH --exclusive
-#SBATCH --time=04:00:00
-#SBATCH --output={home}/logs/olmo3-bench-h100-%j.out
-#SBATCH --error={home}/logs/olmo3-bench-h100-%j.err
-
-set -euo pipefail
-WORK_DIR="{home}/olmo3-nemo"
-BENCH_DIR="{home}/olmo3-nemo/benchmark-h100"
-CONTAINER="nvcr.io#nvidia/nemo-automodel:25.11.00"
-
-HEAD_NODE=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -1)
-HEAD_ADDR=$(srun -N1 -n1 -w $HEAD_NODE hostname -I | awk '{{print $1}}')
-
-echo "=== H100 BENCHMARK START ==="
-echo "HEAD_NODE: $HEAD_NODE"
-echo "HEAD_ADDR: $HEAD_ADDR"
-echo "NODES: $SLURM_JOB_NUM_NODES"
-date -u
-mkdir -p $BENCH_DIR
-
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node=1 \\
-  --gpus-per-node=8 \\
-  --container-image=$CONTAINER \\
-  --container-writable \\
-  --container-mounts="$WORK_DIR:$WORK_DIR" \\
-  bash -c '
-  set -e
-  export HF_HOME='$WORK_DIR'/.hf_cache
-  export TOKENIZERS_PARALLELISM=false
-  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-  export NCCL_DEBUG=WARN
-  export NCCL_SOCKET_IFNAME=enp0s12
-  export NCCL_IB_DISABLE=0
-  export PYTHONPATH='$WORK_DIR':$PYTHONPATH
-
-  mkdir -p '$BENCH_DIR'
-  date -u > '$BENCH_DIR'/start_time.txt
-  nvidia-smi dmon -s u -d 2 > '$BENCH_DIR'/gpu_util.csv 2>&1 &
-  SMI_PID=$!
-  nvidia-smi --query-gpu=name,memory.total --format=csv > '$BENCH_DIR'/gpu_info.csv 2>&1
-
-  nsys profile \\
-    --trace=cuda,nvtx,osrt,cudnn,cublas \\
-    --cuda-memory-usage=true \\
-    --delay=30 \\
-    --duration=300 \\
-    --output='$BENCH_DIR'/nsys_h100_rank$SLURM_PROCID \\
-    --force-overwrite=true \\
-    torchrun \\
-      --nnodes=$SLURM_JOB_NUM_NODES \\
-      --nproc-per-node=8 \\
-      --node-rank=$SLURM_PROCID \\
-      --master-addr='$HEAD_ADDR' \\
-      --master-port=29500 \\
-      '$WORK_DIR'/scripts/finetune.py \\
-      --config '$WORK_DIR'/configs/olmo3_32b_h100.yaml
-
-  date -u > '$BENCH_DIR'/end_time.txt
-  kill $SMI_PID 2>/dev/null || true
-  '
-
-echo "=== H100 BENCHMARK END ==="
-date -u
-echo "BENCHMARK COMPLETE"
-""".format(home=home)
-
-with open(os.path.join(home, "olmo3-nemo/submit_h100_benchmark.sh"), "w") as f:
-    f.write(script)
-os.chmod(os.path.join(home, "olmo3-nemo/submit_h100_benchmark.sh"), 0o755)
-print("H100 NeMo benchmark script written successfully")
-PYEOF
-python3 /tmp/write_h100_bench.py
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/submit_h100_benchmark.sh \
+   ~/olmo3-nemo/submit_h100_benchmark.sh
+chmod +x ~/olmo3-nemo/submit_h100_benchmark.sh
 ```
+
+> The script is available at [`h100_finetuning/submit_h100_benchmark.sh`](h100_finetuning/submit_h100_benchmark.sh) in this repository.
 
 ### 6.6 Run the NeMo Benchmarks
 
@@ -1119,504 +763,40 @@ cp /var/tmp/enroot-data/user-*/nvidia+pytorch+24.04-py3.sqsh \
 
 ### 7.6 Training Script (`train_fsdp_v3.py`)
 
+Copy from this repository:
+
 ```bash
-cat > ~/olmo3-nemo/scripts/train_fsdp_v3.py << 'TRAINEOF'
-"""
-OLMo-3 32B Fine-Tuning — Native PyTorch FSDP + TCPXO (v3)
-
-No DeepSpeed. No Accelerate. No NeMo.
-Just PyTorch FSDP + transformers for model loading.
-"""
-
-import argparse
-import functools
-import json
-import logging
-import os
-import time
-
-import torch
-import torch.distributed as dist
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-    ShardingStrategy,
-    BackwardPrefetch,
-    CPUOffload,
-)
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from torch.utils.data import Dataset, DataLoader, DistributedSampler
-
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    apply_activation_checkpointing,
-    checkpoint_wrapper,
-    CheckpointImpl,
-)
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-
-def log_memory(tag, device=0):
-    if torch.cuda.is_available():
-        alloc = torch.cuda.memory_allocated(device) / 1e9
-        reserved = torch.cuda.memory_reserved(device) / 1e9
-        logger.info(f"[MEM {tag}] allocated={alloc:.1f}GB reserved={reserved:.1f}GB")
-
-
-def is_main():
-    return not dist.is_initialized() or dist.get_rank() == 0
-
-
-def get_decoder_layer_class(model):
-    """Dynamically find the transformer decoder layer class."""
-    inner = getattr(model, "model", model)
-    layers = getattr(inner, "layers", None)
-    if layers is not None and len(layers) > 0:
-        cls = type(layers[0])
-        if is_main():
-            logger.info(f"Detected decoder layer class: {cls.__name__}")
-        return cls
-    raise RuntimeError("Could not detect decoder layer class.")
-
-
-class MalwareAnalysisDataset(Dataset):
-    def __init__(self, data_path, tokenizer, max_length=2048):
-        self.samples = []
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        with open(data_path, "r") as f:
-            for line in f:
-                self.samples.append(json.loads(line.strip()))
-        if is_main():
-            logger.info(f"Loaded {len(self.samples)} samples from {data_path}")
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        record = self.samples[idx]
-        conversations = record["conversations"]
-        system_msg = conversations[0]["content"]
-        user_msg = conversations[1]["content"]
-        assistant_msg = conversations[2]["content"]
-
-        if "<binary>" in user_msg and "</binary>" in user_msg:
-            start = user_msg.index("<binary>") + len("<binary>")
-            end = user_msg.index("</binary>")
-            binary_hex = user_msg[start:end]
-            question = user_msg[end + len("</binary>"):]
-            prompt_overhead = len(self.tokenizer.encode(
-                f"System: {system_msg}\nUser: <binary></binary>{question}\nAssistant: {assistant_msg}",
-                add_special_tokens=False
-            ))
-            hex_budget = max(200, self.max_length - prompt_overhead - 50)
-            hex_tokens = self.tokenizer.encode(binary_hex, add_special_tokens=False)
-            if len(hex_tokens) > hex_budget:
-                truncated = self.tokenizer.decode(hex_tokens[:hex_budget])
-                user_msg = f"<binary>{truncated}</binary>{question}"
-
-        text = f"System: {system_msg}\nUser: {user_msg}\nAssistant: {assistant_msg}"
-        encoded = self.tokenizer(
-            text, max_length=self.max_length, truncation=True,
-            padding="max_length", return_tensors="pt"
-        )
-        input_ids = encoded["input_ids"].squeeze(0)
-        attention_mask = encoded["attention_mask"].squeeze(0)
-        return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": input_ids.clone()}
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", default="allenai/Olmo-3-1125-32B")
-    parser.add_argument("--data_path", required=True)
-    parser.add_argument("--output_dir", default="./output")
-    parser.add_argument("--max_length", type=int, default=2048)
-    parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
-    parser.add_argument("--num_epochs", type=int, default=1)
-    parser.add_argument("--learning_rate", type=float, default=2e-5)
-    parser.add_argument("--warmup_steps", type=int, default=10)
-    parser.add_argument("--log_every", type=int, default=1)
-    parser.add_argument("--save_every", type=int, default=50)
-    parser.add_argument("--cpu_offload", action="store_true")
-    args = parser.parse_args()
-
-    dist.init_process_group(backend="nccl")
-    local_rank = int(os.environ["LOCAL_RANK"])
-    global_rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    torch.cuda.set_device(local_rank)
-    device = torch.device(f"cuda:{local_rank}")
-
-    if global_rank == 0:
-        logger.info("=" * 60)
-        logger.info("OLMo-3 32B Fine-Tuning — Native PyTorch FSDP v3")
-        logger.info(f"Model: {args.model_name}")
-        logger.info(f"Data: {args.data_path}")
-        logger.info(f"World size: {world_size}")
-        logger.info(f"PyTorch: {torch.__version__}, CUDA: {torch.version.cuda}")
-        logger.info(f"GPUs per node: {torch.cuda.device_count()}")
-        logger.info("=" * 60)
-
-    log_memory("before-model-load", local_rank)
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name, torch_dtype=torch.bfloat16, trust_remote_code=True,
-        use_cache=False, low_cpu_mem_usage=True,
-    )
-    model.config.use_cache = False
-
-    if global_rank == 0:
-        param_count = sum(p.numel() for p in model.parameters()) / 1e9
-        logger.info(f"Model loaded: {param_count:.1f}B parameters")
-
-    decoder_layer_cls = get_decoder_layer_class(model)
-    auto_wrap_policy = functools.partial(
-        transformer_auto_wrap_policy, transformer_layer_cls={decoder_layer_cls},
-    )
-
-    bf16_policy = MixedPrecision(
-        param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16, buffer_dtype=torch.bfloat16,
-    )
-
-    cpu_offload = CPUOffload(offload_params=True) if args.cpu_offload else None
-
-    model = FSDP(
-        model, auto_wrap_policy=auto_wrap_policy, mixed_precision=bf16_policy,
-        sharding_strategy=ShardingStrategy.FULL_SHARD, cpu_offload=cpu_offload,
-        backward_prefetch=BackwardPrefetch.BACKWARD_PRE, device_id=local_rank,
-        limit_all_gathers=True, use_orig_params=True,
-    )
-
-    non_reentrant_wrapper = functools.partial(
-        checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-    )
-    apply_activation_checkpointing(
-        model, checkpoint_wrapper_fn=non_reentrant_wrapper,
-        check_fn=lambda submodule: isinstance(submodule, decoder_layer_cls),
-    )
-
-    dataset = MalwareAnalysisDataset(args.data_path, tokenizer, args.max_length)
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=global_rank, shuffle=True)
-    dataloader = DataLoader(
-        dataset, batch_size=args.batch_size, sampler=sampler,
-        num_workers=2, pin_memory=True, drop_last=True,
-    )
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
-
-    total_steps = len(dataloader) * args.num_epochs // args.gradient_accumulation_steps
-
-    model.train()
-    global_step = 0
-    total_tokens = 0
-    step_times = []
-    accumulated_loss = 0.0
-    accumulated = 0
-
-    for epoch in range(args.num_epochs):
-        sampler.set_epoch(epoch)
-        for batch_idx, batch in enumerate(dataloader):
-            step_start = time.time()
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
-
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss / args.gradient_accumulation_steps
-            loss.backward()
-
-            accumulated_loss += loss.item()
-            accumulated += 1
-            tokens_in_batch = attention_mask.sum().item()
-            total_tokens += tokens_in_batch * world_size
-
-            if accumulated >= args.gradient_accumulation_steps:
-                model.clip_grad_norm_(1.0)
-                optimizer.step()
-                optimizer.zero_grad()
-                global_step += 1
-                step_time = time.time() - step_start
-                step_times.append(step_time * args.gradient_accumulation_steps)
-
-                if global_rank == 0 and global_step % args.log_every == 0:
-                    tps = (tokens_in_batch * world_size * args.gradient_accumulation_steps) / step_times[-1]
-                    avg_tps = total_tokens / sum(step_times) if step_times else 0
-                    alloc_gb = torch.cuda.memory_allocated(device) / 1e9
-                    logger.info(
-                        f"Step {global_step}/{total_steps} | Loss: {accumulated_loss:.4f} "
-                        f"| TPS: {tps:.0f} (avg: {avg_tps:.0f}) "
-                        f"| GPU mem: {alloc_gb:.1f}GB | Step time: {step_times[-1]:.2f}s"
-                    )
-
-                accumulated_loss = 0.0
-                accumulated = 0
-                dist.barrier()
-
-    if global_rank == 0:
-        total_time = sum(step_times)
-        avg_tps = total_tokens / total_time if total_time > 0 else 0
-        logger.info("TRAINING COMPLETE")
-        logger.info(f"Average TPS: {avg_tps:.0f}")
-        logger.info(f"Peak GPU memory: {torch.cuda.max_memory_allocated(device) / 1e9:.1f}GB")
-        metrics = {
-            "total_steps": global_step, "total_tokens": total_tokens,
-            "total_time_seconds": total_time, "average_tokens_per_second": avg_tps,
-            "peak_gpu_memory_gb": torch.cuda.max_memory_allocated(device) / 1e9,
-            "world_size": world_size, "model": args.model_name,
-            "batch_size": args.batch_size,
-            "gradient_accumulation_steps": args.gradient_accumulation_steps,
-            "max_length": args.max_length,
-            "framework": "PyTorch FSDP (native)",
-        }
-        os.makedirs(args.output_dir, exist_ok=True)
-        with open(os.path.join(args.output_dir, "metrics.json"), "w") as f:
-            json.dump(metrics, f, indent=2)
-
-    dist.destroy_process_group()
-
-
-if __name__ == "__main__":
-    main()
-TRAINEOF
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/fsdp_scripts/train_fsdp_v3.py \
+   ~/olmo3-nemo/scripts/train_fsdp_v3.py
 ```
+
+> The full training script is available at [`h100_finetuning/fsdp_scripts/train_fsdp_v3.py`](h100_finetuning/fsdp_scripts/train_fsdp_v3.py) in this repository. It implements native PyTorch FSDP with `transformer_auto_wrap_policy`, activation checkpointing, and `DistributedSampler`.
 
 ### 7.7 Submit Script — Basic Run (No Nsight)
 
+Copy from this repository:
+
 ```bash
-cat > ~/olmo3-nemo/submit_h100_fsdp_v3.sh << 'SBATCHEOF'
-#!/bin/bash
-#SBATCH --job-name=olmo3-fsdp
-#SBATCH --partition=a3mega
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=8
-#SBATCH --exclusive
-#SBATCH --mem=0
-#SBATCH --time=04:00:00
-#SBATCH --output=/home/%u/logs/olmo3-fsdp-%j.out
-#SBATCH --error=/home/%u/logs/olmo3-fsdp-%j.err
-
-set -euo pipefail
-
-WORK_DIR="/home/$(whoami)/olmo3-nemo"
-BENCH_DIR="${WORK_DIR}/benchmark-h100-fsdp"
-SCRIPT_DIR="${WORK_DIR}/scripts"
-DATA_DIR="${WORK_DIR}/data"
-CONTAINER_IMAGE="${WORK_DIR}/nvidia+pytorch+24.04-py3.sqsh"
-HF_CACHE="${WORK_DIR}/.hf_cache"
-OUTPUT_DIR="${BENCH_DIR}/output"
-
-# TCPXO env vars from host
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
-NCCL_LIB_DIR="/var/lib/tcpxo/lib64" source /var/lib/tcpxo/lib64/nccl-env-profile.sh
-export NCCL_DEBUG=WARN
-
-HOST_VARS=$(sed 's/ \{1,\}/,/g' <<<"${!NCCL*}")
-
-CONTAINER_MOUNTS="/var/tmp:/var/tmp"
-CONTAINER_MOUNTS="${CONTAINER_MOUNTS},${WORK_DIR}:${WORK_DIR}"
-CONTAINER_MOUNTS="${CONTAINER_MOUNTS},/var/lib/tcpxo/lib64/"
-
-HEAD_NODE=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -1)
-HEAD_ADDR=$(srun -N1 -n1 -w $HEAD_NODE hostname -I | awk '{print $1}')
-MASTER_PORT=29500
-
-echo "=== H100 FSDP + TCPXO (v3) ==="
-echo "HEAD_NODE: $HEAD_NODE"
-echo "Nodes: $SLURM_JOB_NUM_NODES"
-date -u
-mkdir -p $BENCH_DIR $OUTPUT_DIR ~/logs
-
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node=1 \
-  --gpus-per-node=8 \
-  --container-image=$CONTAINER_IMAGE \
-  --container-writable \
-  --container-mounts="${CONTAINER_MOUNTS}" \
-  --container-env="${HOST_VARS}" \
-  bash -c '
-  set -e
-
-  # TCPXO: LD_PRELOAD overrides container NCCL
-  export LD_PRELOAD=/var/lib/tcpxo/lib64/libnccl.so.2.28.7
-  export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH
-  export HF_HOME='$HF_CACHE'
-  export HUGGINGFACE_HUB_CACHE='$HF_CACHE'
-  export TOKENIZERS_PARALLELISM=false
-  export NCCL_DEBUG=WARN
-  export TORCH_SHOW_CPP_STACKTRACES=1
-
-  pip install --quiet "transformers>=4.57.0,<5.0.0" "sentencepiece" "datasets" 2>&1 | tail -5
-
-  LOGDIR='$BENCH_DIR'/torchrun_logs_${SLURM_PROCID}_$(date +%s)
-  mkdir -p $LOGDIR
-  nvidia-smi dmon -s u -d 2 > '$BENCH_DIR'/gpu_util_$(hostname).csv 2>&1 &
-
-  torchrun \
-    --nnodes='$SLURM_JOB_NUM_NODES' \
-    --nproc-per-node=8 \
-    --node-rank=${SLURM_PROCID} \
-    --master-addr='$HEAD_ADDR' \
-    --master-port='$MASTER_PORT' \
-    --redirects=3 --log-dir=$LOGDIR \
-    '$SCRIPT_DIR'/train_fsdp_v3.py \
-      --model_name allenai/Olmo-3-1125-32B \
-      --data_path '$DATA_DIR'/train.jsonl \
-      --output_dir '$OUTPUT_DIR' \
-      --max_length 2048 --batch_size 1 \
-      --gradient_accumulation_steps 4 \
-      --num_epochs 1 --learning_rate 2e-5 \
-      --warmup_steps 10 --log_every 1 --save_every 50
-  '
-SBATCHEOF
-
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/fsdp_scripts/submit_h100_fsdp_v3.sh \
+   ~/olmo3-nemo/submit_h100_fsdp_v3.sh
 chmod +x ~/olmo3-nemo/submit_h100_fsdp_v3.sh
 ```
+
+> The script is available at [`h100_finetuning/fsdp_scripts/submit_h100_fsdp_v3.sh`](h100_finetuning/fsdp_scripts/submit_h100_fsdp_v3.sh) in this repository.
 
 > **Note:** If you do not have the `.sqsh` file, change `CONTAINER_IMAGE` to use the registry path directly: `CONTAINER_IMAGE="nvcr.io#nvidia/pytorch:24.04-py3"`.
 
 ### 7.8 Submit Script — With Nsight Profiling + DCGM
 
+Copy from this repository:
+
 ```bash
-cat > ~/olmo3-nemo/submit_h100_fsdp_v3_nsys.sh << 'SBATCHEOF'
-#!/bin/bash
-#SBATCH --job-name=olmo3-fsdp-nsys
-#SBATCH --partition=a3mega
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=8
-#SBATCH --exclusive
-#SBATCH --mem=0
-#SBATCH --time=04:00:00
-#SBATCH --output=/home/%u/logs/olmo3-fsdp-nsys-%j.out
-#SBATCH --error=/home/%u/logs/olmo3-fsdp-nsys-%j.err
-
-set -euo pipefail
-
-WORK_DIR="/home/$(whoami)/olmo3-nemo"
-BENCH_DIR="${WORK_DIR}/benchmark-h100-fsdp-nsys"
-SCRIPT_DIR="${WORK_DIR}/scripts"
-DATA_DIR="${WORK_DIR}/data"
-CONTAINER_IMAGE="${WORK_DIR}/nvidia+pytorch+24.04-py3.sqsh"
-HF_CACHE="${WORK_DIR}/.hf_cache"
-OUTPUT_DIR="${BENCH_DIR}/output"
-NSYS_DIR="${BENCH_DIR}/nsys"
-
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
-NCCL_LIB_DIR="/var/lib/tcpxo/lib64" source /var/lib/tcpxo/lib64/nccl-env-profile.sh
-export NCCL_DEBUG=WARN
-HOST_VARS=$(sed 's/ \{1,\}/,/g' <<<"${!NCCL*}")
-
-CONTAINER_MOUNTS="/var/tmp:/var/tmp,${WORK_DIR}:${WORK_DIR},/var/lib/tcpxo/lib64/"
-
-HEAD_NODE=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -1)
-HEAD_ADDR=$(srun -N1 -n1 -w $HEAD_NODE hostname -I | awk '{print $1}')
-MASTER_PORT=29500
-
-echo "=== H100 FSDP + TCPXO + NSIGHT (v3) ==="
-date -u
-mkdir -p $BENCH_DIR $OUTPUT_DIR $NSYS_DIR ~/logs
-
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node=1 \
-  --gpus-per-node=8 \
-  --container-image=$CONTAINER_IMAGE \
-  --container-writable \
-  --container-mounts="${CONTAINER_MOUNTS}" \
-  --container-env="${HOST_VARS}" \
-  bash -c '
-  set -e
-
-  export LD_PRELOAD=/var/lib/tcpxo/lib64/libnccl.so.2.28.7
-  export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH
-  export HF_HOME='$HF_CACHE'
-  export HUGGINGFACE_HUB_CACHE='$HF_CACHE'
-  export TOKENIZERS_PARALLELISM=false
-  export NCCL_DEBUG=WARN
-  export TORCH_SHOW_CPP_STACKTRACES=1
-
-  pip install --quiet "transformers>=4.57.0,<5.0.0" "sentencepiece" "datasets" 2>&1 | tail -5
-
-  LOGDIR='$BENCH_DIR'/torchrun_logs_${SLURM_PROCID}_$(date +%s)
-  mkdir -p $LOGDIR
-
-  # GPU monitoring
-  nvidia-smi dmon -s u -d 2 > '$BENCH_DIR'/gpu_util_$(hostname).csv 2>&1 &
-  SMI_PID=$!
-
-  # DCGM monitoring (if available)
-  if command -v dcgmi &> /dev/null; then
-    dcgmi dmon -e 150,155,156,100,101,140,203,204,252 -d 1000 \
-      > '$BENCH_DIR'/dcgm_$(hostname).csv 2>&1 &
-    DCGM_PID=$!
-  fi
-
-  date -u > '$BENCH_DIR'/start_time.txt
-
-  # Nsight: profile rank 0 only
-  if [ "${SLURM_PROCID}" -eq 0 ]; then
-    nsys profile \
-      --trace=cuda,nvtx,osrt,cudnn,cublas \
-      --gpu-metrics-device=all \
-      --cuda-memory-usage=true \
-      --capture-range=cudaProfilerApi \
-      --capture-range-end=stop \
-      -o '$NSYS_DIR'/h100_fsdp_tcpxo_$(hostname) \
-      torchrun \
-        --nnodes='$SLURM_JOB_NUM_NODES' \
-        --nproc-per-node=8 \
-        --node-rank=${SLURM_PROCID} \
-        --master-addr='$HEAD_ADDR' \
-        --master-port='$MASTER_PORT' \
-        --redirects=3 --log-dir=$LOGDIR \
-        '$SCRIPT_DIR'/train_fsdp_v3.py \
-          --model_name allenai/Olmo-3-1125-32B \
-          --data_path '$DATA_DIR'/train.jsonl \
-          --output_dir '$OUTPUT_DIR' \
-          --max_length 2048 --batch_size 1 \
-          --gradient_accumulation_steps 4 \
-          --num_epochs 1 --learning_rate 2e-5 \
-          --warmup_steps 10 --log_every 1 --save_every 50
-  else
-    torchrun \
-      --nnodes='$SLURM_JOB_NUM_NODES' \
-      --nproc-per-node=8 \
-      --node-rank=${SLURM_PROCID} \
-      --master-addr='$HEAD_ADDR' \
-      --master-port='$MASTER_PORT' \
-      --redirects=3 --log-dir=$LOGDIR \
-      '$SCRIPT_DIR'/train_fsdp_v3.py \
-        --model_name allenai/Olmo-3-1125-32B \
-        --data_path '$DATA_DIR'/train.jsonl \
-        --output_dir '$OUTPUT_DIR' \
-        --max_length 2048 --batch_size 1 \
-        --gradient_accumulation_steps 4 \
-        --num_epochs 1 --learning_rate 2e-5 \
-        --warmup_steps 10 --log_every 1 --save_every 50
-  fi
-
-  TRAIN_EXIT=$?
-  date -u > '$BENCH_DIR'/end_time.txt
-  kill $SMI_PID 2>/dev/null || true
-  kill $DCGM_PID 2>/dev/null || true
-  exit $TRAIN_EXIT
-  '
-
-echo "=== BENCHMARK END ==="
-date -u
-SBATCHEOF
-
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/fsdp_scripts/submit_h100_fsdp_v3_nsys.sh \
+   ~/olmo3-nemo/submit_h100_fsdp_v3_nsys.sh
 chmod +x ~/olmo3-nemo/submit_h100_fsdp_v3_nsys.sh
 ```
+
+> The script is available at [`h100_finetuning/fsdp_scripts/submit_h100_fsdp_v3_nsys.sh`](h100_finetuning/fsdp_scripts/submit_h100_fsdp_v3_nsys.sh) in this repository.
 
 ### 7.9 Run the FSDP+TCPXO Benchmark
 
@@ -1780,7 +960,7 @@ The benchmark submit scripts (both NeMo and FSDP+TCPXO) capture Nsight Systems t
 #### Step 1: Create SSH Tunnel (from local terminal or Cloud Shell)
 
 ```bash
-gcloud compute ssh <WORKSTATION_VM_NAME> --zone=us-central1-a \
+gcloud compute ssh <WORKSTATION_VM_NAME> --zone=<H100_ZONE> \
   --project=<YOUR_PROJECT_ID> -- -L 8080:localhost:8080
 ```
 
@@ -1935,7 +1115,7 @@ cd ~/cluster-toolkit
 # B200 cluster (disable Filestore deletion protection first)
 gcloud filestore instances list --project=<YOUR_PROJECT_ID>
 gcloud filestore instances update <FILESTORE_INSTANCE_NAME> \
-  --no-deletion-protection --zone=us-south1-b --project=<YOUR_PROJECT_ID>
+  --no-deletion-protection --zone=<B200_ZONE> --project=<YOUR_PROJECT_ID>
 ./gcluster destroy olmo3-b200 --auto-approve
 
 # Clean up GCS buckets
@@ -1943,7 +1123,7 @@ gcloud storage buckets delete gs://<YOUR_H100_TF_STATE_BUCKET>
 gcloud storage buckets delete gs://<YOUR_B200_TF_STATE_BUCKET>
 
 # Delete workstation VM
-gcloud compute instances delete <WORKSTATION_VM_NAME> --zone=us-central1-a --quiet
+gcloud compute instances delete <WORKSTATION_VM_NAME> --zone=<H100_ZONE> --quiet
 ```
 
 ---
@@ -2018,36 +1198,11 @@ cp ~/olmo3-nemo/data/train.jsonl ~/olmo3-finetune/simulated_training_data/train.
 #### Deploy the Accelerate FSDP Config
 
 ```bash
-cat > ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml << 'EOF'
-compute_environment: LOCAL_MACHINE
-debug: false
-distributed_type: FSDP
-downcast_bf16: "no"
-fsdp_config:
-  fsdp_sharding_strategy: FULL_SHARD
-  fsdp_activation_checkpointing: true
-  fsdp_auto_wrap_policy: SIZE_BASED_WRAP
-  fsdp_min_num_params: 100000000
-  fsdp_offload_params: true
-  fsdp_state_dict_type: SHARDED_STATE_DICT
-  fsdp_forward_prefetch: true
-  fsdp_backward_prefetch: BACKWARD_PRE
-  fsdp_sync_module_states: true
-  fsdp_use_orig_params: true
-  fsdp_cpu_ram_efficient_loading: true
-machine_rank: 0
-main_training_function: main
-mixed_precision: bf16
-num_machines: 2
-num_processes: 16
-rdzv_backend: c10d
-same_network: true
-tpu_env: []
-tpu_use_cluster: false
-tpu_use_sudo: false
-use_cpu: false
-EOF
+cp ~/B200_H100_FineTuning_Benchmark/h100_finetuning/fsdp_scripts/accelerate_fsdp_config.yaml \
+   ~/olmo3-finetune/scripts/accelerate_fsdp_config.yaml
 ```
+
+> The config is available at [`h100_finetuning/fsdp_scripts/accelerate_fsdp_config.yaml`](h100_finetuning/fsdp_scripts/accelerate_fsdp_config.yaml) in this repository.
 
 #### Deploy Training and Submit Scripts
 

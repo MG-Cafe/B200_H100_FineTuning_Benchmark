@@ -6,8 +6,8 @@ terraform_backend_defaults:
 vars:
   deployment_name: olmo3-h100
   project_id: <YOUR_PROJECT_ID>
-  region: us-central1
-  zone: us-central1-a
+  region: <H100_REGION>
+  zone: <H100_ZONE>
   network_name_system: olmo3-h100-sys-net
   subnetwork_name_system: olmo3-h100-sys-subnet
   enable_ops_agent: true
