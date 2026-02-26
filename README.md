@@ -66,6 +66,10 @@ Throughout this guide, replace placeholders with your own values:
 | `<YOUR_B200_TF_STATE_BUCKET>` | GCS bucket for B200 Terraform state | `olmo3-b200-tf-state` |
 | `<YOUR_RESULTS_BUCKET>` | GCS bucket for benchmark results | `olmo3-benchmark-results` |
 | `<YOUR_USER>` | Your Linux username on the cluster | `sa_12345` (check with `whoami`) |
+| `<WORKSTATION_VM_NAME>` | Name of your management workstation VM | `cluster-mgmt` |
+| `<B200_LOGIN_NODE>` | B200 cluster Slurm login node name | `olmo3b200-slurm-login-001` |
+| `<H100_LOGIN_NODE>` | H100 cluster Slurm login node name | `olmo3h100-login-001` |
+| `<HOME_DIR>` | Your home directory on the cluster | `/home/sa_12345` (check with `echo $HOME`) |
 
 ---
 
@@ -84,8 +88,8 @@ gcloud services enable \
   serviceusage.googleapis.com cloudresourcemanager.googleapis.com \
   iam.googleapis.com servicenetworking.googleapis.com
 
-# Create workstation VM
-gcloud compute instances create cluster-mgmt \
+# Create workstation VM (you can change the name)
+gcloud compute instances create <WORKSTATION_VM_NAME> \
   --project=<YOUR_PROJECT_ID> \
   --zone=us-central1-a \
   --machine-type=e2-standard-8 \
@@ -97,12 +101,12 @@ gcloud compute instances create cluster-mgmt \
   --metadata=enable-oslogin=TRUE
 
 # SSH into it
-gcloud compute ssh cluster-mgmt --zone=us-central1-a
+gcloud compute ssh <WORKSTATION_VM_NAME> --zone=us-central1-a
 ```
 
 ### Step 2: Install Dependencies on Workstation
 
-Run inside the `cluster-mgmt` VM:
+Run inside the `<WORKSTATION_VM_NAME>` VM:
 
 ```bash
 sudo apt-get update && sudo apt-get upgrade -y
@@ -213,7 +217,7 @@ Total time: ~45–60 minutes (builds custom Slurm image ~35 min, then deploys cl
 
 #### Step 8A: Connect and Validate B200
 
-Run from the workstation VM (`cluster-mgmt`):
+Run from the workstation VM (`<WORKSTATION_VM_NAME>`):
 
 ```bash
 # Find login node
@@ -221,7 +225,7 @@ gcloud compute instances list --project=<YOUR_PROJECT_ID> \
   --filter="name~olmo3.*b200.*login" --format="table(name,zone,status)"
 
 # Create SSH firewall rule
-NETWORK=$(gcloud compute instances describe olmo3b200-slurm-login-001 \
+NETWORK=$(gcloud compute instances describe <B200_LOGIN_NODE> \
   --zone=us-south1-b --format='get(networkInterfaces[0].network)' \
   --project=<YOUR_PROJECT_ID> | awk -F/ '{print $NF}')
 
@@ -230,7 +234,7 @@ gcloud compute firewall-rules create allow-ssh-b200 \
   --source-ranges=0.0.0.0/0 --project=<YOUR_PROJECT_ID>
 
 # SSH to login node
-gcloud compute ssh olmo3b200-slurm-login-001 \
+gcloud compute ssh <B200_LOGIN_NODE> \
   --zone=us-south1-b --project=<YOUR_PROJECT_ID>
 ```
 
@@ -322,7 +326,7 @@ Total time: ~45–60 minutes. If re-deploying (image already built), add: `--onl
 
 #### Step 9B: Connect and Validate H100
 
-Run from workstation VM (`cluster-mgmt`):
+Run from workstation VM (`<WORKSTATION_VM_NAME>`):
 
 ```bash
 # Find login node
@@ -330,7 +334,7 @@ gcloud compute instances list --project=<YOUR_PROJECT_ID> \
   --filter="name~olmo3h100.*login" --format="table(name,zone,status)"
 
 # Create SSH firewall rule
-NETWORK=$(gcloud compute instances describe olmo3h100-login-001 \
+NETWORK=$(gcloud compute instances describe <H100_LOGIN_NODE> \
   --zone=us-central1-a --format='get(networkInterfaces[0].network)' \
   --project=<YOUR_PROJECT_ID> | awk -F/ '{print $NF}')
 
@@ -339,7 +343,7 @@ gcloud compute firewall-rules create allow-ssh-h100 \
   --source-ranges=0.0.0.0/0 --project=<YOUR_PROJECT_ID>
 
 # SSH to login node
-gcloud compute ssh olmo3h100-login-001 \
+gcloud compute ssh <H100_LOGIN_NODE> \
   --zone=us-central1-a --project=<YOUR_PROJECT_ID>
 ```
 
@@ -1776,13 +1780,13 @@ The benchmark submit scripts (both NeMo and FSDP+TCPXO) capture Nsight Systems t
 #### Step 1: Create SSH Tunnel (from local terminal or Cloud Shell)
 
 ```bash
-gcloud compute ssh cluster-mgmt --zone=us-central1-a \
+gcloud compute ssh <WORKSTATION_VM_NAME> --zone=us-central1-a \
   --project=<YOUR_PROJECT_ID> -- -L 8080:localhost:8080
 ```
 
 #### Step 2: Install Nsight Systems and Desktop Environment
 
-On the workstation VM (`cluster-mgmt`):
+On the workstation VM (`<WORKSTATION_VM_NAME>`):
 
 ```bash
 sudo apt-get update
@@ -1939,7 +1943,7 @@ gcloud storage buckets delete gs://<YOUR_H100_TF_STATE_BUCKET>
 gcloud storage buckets delete gs://<YOUR_B200_TF_STATE_BUCKET>
 
 # Delete workstation VM
-gcloud compute instances delete cluster-mgmt --zone=us-central1-a --quiet
+gcloud compute instances delete <WORKSTATION_VM_NAME> --zone=us-central1-a --quiet
 ```
 
 ---

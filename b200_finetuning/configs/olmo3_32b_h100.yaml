@@ -23,7 +23,7 @@ model:
 
 checkpoint:
   enabled: true
-  checkpoint_dir: /home/sa_101048180276343241939/olmo3-nemo/output-h100/checkpoints
+  checkpoint_dir: <HOME_DIR>/olmo3-nemo/output-h100/checkpoints
   model_save_format: safetensors
   save_consolidated: false
 
@@ -40,7 +40,7 @@ loss_fn:
 
 dataset:
   _target_: scripts.malware_dataset.MalwareAnalysisDataset
-  path_or_dataset: /home/sa_101048180276343241939/olmo3-nemo/data/train.jsonl
+  path_or_dataset: <HOME_DIR>/olmo3-nemo/data/train.jsonl
   split: train
   max_length: 2048
 

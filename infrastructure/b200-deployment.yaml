@@ -2,11 +2,11 @@
 terraform_backend_defaults:
   type: gcs
   configuration:
-    bucket: olmo3-b200-tf-state
+    bucket: <YOUR_B200_TF_STATE_BUCKET>
 
 vars:
   deployment_name: olmo3-b200
-  project_id: gpu-launchpad-playground
+  project_id: <YOUR_PROJECT_ID>
   region: us-south1
   zone: us-south1-b
 

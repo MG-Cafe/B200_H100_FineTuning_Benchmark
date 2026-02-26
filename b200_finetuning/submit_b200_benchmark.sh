@@ -6,12 +6,12 @@
 #SBATCH --gpus-per-node=8
 #SBATCH --exclusive
 #SBATCH --time=04:00:00
-#SBATCH --output=/home/sa_101048180276343241939/logs/olmo3-bench-b200-%j.out
-#SBATCH --error=/home/sa_101048180276343241939/logs/olmo3-bench-b200-%j.err
+#SBATCH --output=/home/%u/logs/olmo3-bench-b200-%j.out
+#SBATCH --error=/home/%u/logs/olmo3-bench-b200-%j.err
 
 set -euo pipefail
-WORK_DIR="/home/sa_101048180276343241939/olmo3-nemo"
-BENCH_DIR="/home/sa_101048180276343241939/olmo3-nemo/benchmark-b200"
+WORK_DIR="/home/$(whoami)/olmo3-nemo"
+BENCH_DIR="/home/$(whoami)/olmo3-nemo/benchmark-b200"
 CONTAINER="nvcr.io#nvidia/nemo-automodel:25.11.00"
 
 HEAD_NODE=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -1)
